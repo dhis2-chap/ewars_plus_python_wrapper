@@ -1,6 +1,6 @@
-{"alarm_variables":["meantemperature","rainsum_std"],
+{"alarm_variables":["mean_temperature","rainfall_std"],
 "other_alarm_variables":"",
-"number_of_cases_var":"weekly_dengue_cases",
+"number_of_cases_var":"disease_cases",
 "population_var":"population",
 "nlag":12,
 "generate_DBI_report_html":0,

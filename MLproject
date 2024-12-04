@@ -1,11 +1,14 @@
 name: ewars_plus
 
+adapters:
+  disease_cases: "weakly" 
+
 entry_points:
   train:
     parameters:
       train_data: str
       model: str
-    command: "python main.py train {train_data} {polygons}"
+    command: "python main.py train {train_data} {polygons} {model}"
   predict:
     parameters:
       historic_data: str

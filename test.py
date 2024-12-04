@@ -16,7 +16,7 @@ def test_predict():
     geojson = "demo_data/laos_province_shapefile.GEOJSON"
     config_file = "demo_data/ewars_config.json"
     out_file = "demo_data/predictions.csv"
-    predict(future_data, config_file, geojson, out_file)
+    predict(future_data, config_file, out_file)
 
 if __name__ == "__main__":
     test_train()
