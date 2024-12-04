@@ -134,12 +134,13 @@ def change_prediction_format_to_chap(predictions_json, out_csv):
                     'sample_0': prediction.get('predicted_cases'),
                     'sample_1': prediction.get('predicted_cases_lci'),
                     'sample_2': prediction.get('predicted_cases_uci'),
-                    #'location': prediction.get('district'),
+                    'location': prediction['district'],
                     #'predicted_cases': prediction.get('predicted_cases'),
                     #'year': prediction.get('year'),
                     #'week': prediction.get('week')
                 })
 
+    print(rows)
     # Write to CSV
     csv_file = out_csv
     with open(csv_file, mode='w', newline='') as file:
