@@ -5,7 +5,7 @@ entry_points:
     parameters:
       train_data: str
       model: str
-    command: "python main.py train {train_data} {geojson}"
+    command: "python main.py train {train_data} {polygons}"
   predict:
     parameters:
       historic_data: str
