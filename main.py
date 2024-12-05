@@ -64,6 +64,11 @@ def train(historic_data, config_file, geojson_file, mode_file_name):
     run_command(curl_command)
 
 
+def _add_year_week_columns(data):
+    # time_period is in format 2014-12-29/2015-01-04
+    pass
+
+
 def predict(model_file_name, future_data, config_file, out_file):
     # future_data should be a csv that follows the chap format"""
     required_columns = ["location", "mean_temperature", "rainfall", "disease_cases"]
@@ -75,6 +80,10 @@ def predict(model_file_name, future_data, config_file, out_file):
     # add this column to data
     data["rainfall_std"] = rainfall_std
     new_future_data_file_name = future_data.replace(".csv", "_std.csv")
+
+    # add disease_cases column if not in data
+    if "disease_cases" not in data.columns:
+        data["disease_cases"] = 0
 
     # change location to district (which is the name ewars uses)
     data = data.rename(columns={"location": "district"})
@@ -113,6 +122,7 @@ def test_train():
 def test_predict():
     future_data = "laos_dengue_and_diarrhea_pros_data_2024.csv"
     future_data = "demo_data/subset_predict_chap.csv"
+    future_data = "demo_data/future_data.csv"
     config_file = "demo_data/ewars_config.json"
     out_file = "demo_data/predictions.csv"
     model_file_name = "demo_data/model.json"
@@ -130,7 +140,7 @@ def change_prediction_format_to_chap(predictions_json, out_csv):
             # Check if 'predicted_cases' exists, as not all entries have this field
             if 'predicted_cases' in prediction:
                 rows.append({
-                    'time_period': f"{prediction.get('year')}-{prediction.get('week')}",
+                    'time_period': f"{prediction.get('year')}W{prediction.get('week')}",
                     'sample_0': prediction.get('predicted_cases'),
                     'sample_1': prediction.get('predicted_cases_lci'),
                     'sample_2': prediction.get('predicted_cases_uci'),
@@ -154,12 +164,14 @@ def change_prediction_format_to_chap(predictions_json, out_csv):
 
 if __name__ == "__main__":
     #test_train()
-    test_predict()
-    """
+    
+    #test_predict()
+    #sys.exit()
+
     command = sys.argv[1]
     if command == "train":
-        train(sys.argv[2], "demo_data/ewars_config.json", sys.argv[3])
+        train(sys.argv[2], "demo_data/ewars_config.json", sys.argv[3], sys.argv[4])
     elif command == "predict":
-        predict(sys.argv[2], "demo_data/ewars_config.json", sys.argv[3])
-   train(historic_data, config_file, geojson)
-    """
+        predict(sys.argv[2], sys.argv[4], "demo_data/ewars_config.json", sys.argv[5])
+
+   #train(historic_data, config_file, geojson)

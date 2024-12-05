@@ -1,7 +1,8 @@
 name: ewars_plus
 
 adapters:
-  disease_cases: "weakly" 
+  week: "week" 
+  year: "year"
 
 entry_points:
   train:
