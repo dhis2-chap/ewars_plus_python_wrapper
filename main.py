@@ -1,12 +1,15 @@
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+# print logger level
+print(logger.level)
+
 import json
 import csv
 from pathlib import Path
 import subprocess
 import sys
-import logging
 import pandas as pd
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
 
 
 def run_command(command):
@@ -69,11 +72,25 @@ def _add_year_week_columns(data):
     pass
 
 
-def predict(model_file_name, future_data, config_file, out_file):
+def predict(model_file_name, historic_data, future_data, config_file, out_file):
     # future_data should be a csv that follows the chap format"""
     required_columns = ["location", "mean_temperature", "rainfall", "disease_cases"]
     # standardize rainfall
-    data = pd.read_csv(future_data)
+    d1 = pd.read_csv(historic_data)
+    # the model needs the n_lags last rows from the historic data, where n_lags is configure in the config file
+    #d1 = d1.iloc[-9:]
+    d1 = d1.groupby("location").tail(9)
+    logger.info("Historic data")
+    logger.info(d1)
+
+    d2 = pd.read_csv(future_data)
+    # concat historic and future data
+    data = pd.concat([d1, d2])
+    # sort data on location, year, week
+    data = data.sort_values(["location", "year", "week"])
+    print("Full data")
+    print(data)
+
     rainfall = data['rainfall'].values
     model = json.loads(open(model_file_name).read())
     rainfall_std = rainfall - model["rainfall_mean"] / model["rainfall_std"]
@@ -88,6 +105,7 @@ def predict(model_file_name, future_data, config_file, out_file):
     # change location to district (which is the name ewars uses)
     data = data.rename(columns={"location": "district"})
 
+    logger.info("Writing new future data to " + new_future_data_file_name)
     data.to_csv(new_future_data_file_name, index=False)
 
 
@@ -106,8 +124,18 @@ def predict(model_file_name, future_data, config_file, out_file):
     assert out_file.suffix == ".csv"
     out_file_json = str(out_file).replace(".csv", ".json")
     curl_command = f"curl -o {out_file_json} http://127.0.0.1:3288/retrieve_predicted_cases"
-    predictions = run_command(curl_command)
-    change_prediction_format_to_chap(out_file_json, out_file)
+    output = run_command(curl_command)
+    df = change_prediction_format_to_chap(out_file_json, out_file, n_to_predict=len(d2))
+    
+    # keep only those week and years that are in the future data
+    # the model gives more
+    print("d2")
+    print(d2)
+    print("---- df")
+    print(df)
+    df = df.merge(d2[['year', 'week']].drop_duplicates(), on=['year', 'week'], how='inner')
+    assert len(df) == len(d2), f"Length of predictions {len(df)} does not match length of future data {len(d2)}"
+    df.to_csv(out_file, index=False)
 
 
 def test_train():
@@ -120,16 +148,17 @@ def test_train():
 
 
 def test_predict():
-    future_data = "laos_dengue_and_diarrhea_pros_data_2024.csv"
-    future_data = "demo_data/subset_predict_chap.csv"
+    #future_data = "laos_dengue_and_diarrhea_pros_data_2024.csv"
+    #future_data = "demo_data/subset_predict_chap.csv"
+    historic_data = "demo_data/historic_data.csv"
     future_data = "demo_data/future_data.csv"
     config_file = "demo_data/ewars_config.json"
     out_file = "demo_data/predictions.csv"
     model_file_name = "demo_data/model.json"
-    predict(model_file_name, future_data, config_file, out_file)
+    predict(model_file_name, historic_data, future_data, config_file, out_file)
 
  
-def change_prediction_format_to_chap(predictions_json, out_csv):
+def change_prediction_format_to_chap(predictions_json, out_csv, n_to_predict):
     json_data = json.loads(open(predictions_json).read())
 
     # Extract relevant data
@@ -146,18 +175,21 @@ def change_prediction_format_to_chap(predictions_json, out_csv):
                     'sample_2': prediction.get('predicted_cases_uci'),
                     'location': prediction['district'],
                     #'predicted_cases': prediction.get('predicted_cases'),
-                    #'year': prediction.get('year'),
-                    #'week': prediction.get('week')
+                    'year': prediction.get('year'),
+                    'week': prediction.get('week')
                 })
 
-    print(rows)
+    # return as dataframe
+    return pd.DataFrame(rows)
+
     # Write to CSV
     csv_file = out_csv
     with open(csv_file, mode='w', newline='') as file:
         #writer = csv.DictWriter(file, fieldnames=['district', 'predicted_cases', 'year', 'week'])
         writer = csv.DictWriter(file, fieldnames=['time_period', 'sample_0', 'sample_1', 'sample_2', 'location'])
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(rows[:n_to_predict])
+        #writer.writerows(rows)
 
     print(f"Data has been written to {csv_file}")
 
@@ -172,6 +204,6 @@ if __name__ == "__main__":
     if command == "train":
         train(sys.argv[2], "demo_data/ewars_config.json", sys.argv[3], sys.argv[4])
     elif command == "predict":
-        predict(sys.argv[2], sys.argv[4], "demo_data/ewars_config.json", sys.argv[5])
+        predict(sys.argv[2], sys.argv[3], sys.argv[4], "demo_data/ewars_config.json", sys.argv[5])
 
    #train(historic_data, config_file, geojson)
