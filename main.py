@@ -14,6 +14,9 @@ import pandas as pd
 
 def run_command(command):
     logger.info(f"Running command {command}") 
+    print("----------------------------------")
+    print(f"Running command {command}")
+    print("----------------------------------")
     subprocess.run(command, shell=True)
     # get output of command
     output = subprocess.check_output(command, shell=True)
@@ -23,10 +26,19 @@ def run_command(command):
 
 def standardize_rainfall(train_data: pd.DataFrame):
     rainfall = train_data['rainfall'].values
+    print("Rainfall")
+    print(rainfall)
+    # count number of nans in rainfall
+    n_nans = sum(pd.isna(rainfall))
+    print(f"Number of nans in rainfall: {n_nans}")
+    # set nans to 0 in order to compute mean/std
+    subset_for_mean_std = rainfall[~pd.isna(rainfall)]
 
     # standardize by subtracting the mean and dividing by the standard deviation
-    mean = rainfall.mean()
-    std = rainfall.std()
+    mean = subset_for_mean_std.mean()
+    std = subset_for_mean_std.std()
+    print("Mean, std")
+    print(mean, std)
     rainfall_standardized = (rainfall - mean) / std 
 
     return mean, std, rainfall_standardized
@@ -41,6 +53,8 @@ def train(historic_data, config_file, geojson_file, mode_file_name):
         assert col in data.columns, f"Missing required column: {col}"
 
     mean, std, rainfall_standardized = standardize_rainfall(data)
+    print("Rainfall standardized")
+    print(rainfall_standardized)
     # write mean, std to model_file_name, we need these to standardize future data in predict
     mode_file = Path(mode_file_name)
     with open(mode_file, "w") as f:
@@ -55,6 +69,7 @@ def train(historic_data, config_file, geojson_file, mode_file_name):
     data.to_csv(new_historic_data_file_name, index=False)
     
     logger.info(f"Training model with historic data: {historic_data}")
+
     curl_command = f"""curl -X POST \
         http://127.0.0.1:3288/Ewars_run \
         -H 'accept: */*' \
@@ -62,6 +77,7 @@ def train(historic_data, config_file, geojson_file, mode_file_name):
         -F "shape_File=@{geojson_file}" \
         -F "config_File=@{config_file}"
     """
+    print(curl_command)
 
     logger.info(f"Executing command: {curl_command}")
     run_command(curl_command)
@@ -72,6 +88,87 @@ def _add_year_week_columns(data):
     pass
 
 
+def predict_wrapper(model_file_name, historic_data_file_name, future_data, config_file, out_file):
+    """
+    Since the Ewars model has "arbitrary" offset for each region depending on the lag found,
+    we first run one predict to see what lag it uses and then adjust the data so
+    that the it is offseted correctly so that predictions actually start where we want them to
+    for each region.
+
+    In the first run, we always send in more historic data than the maximum lag we think 
+    the model will use. This means the predictions will start somewhere in the historic data (since the model
+    always starts the the amount of weeks into the data that corresponds the the lag it found in step 1.
+    Based on where this is, we adjust the historic data in the next run so that the predictions
+    start exactly where the future data starts (which is what we want).
+
+    Note: historic data has values for covariates and disease cases, future data has NaN for these.
+    """
+    
+    historic_data = pd.read_csv(historic_data_file_name)
+    historic_data = historic_data.groupby("location").tail(15)  # only keep the last 12 weeks, that is the maximum lag that can be found
+
+    # write to csv
+    historic_data_file_name = historic_data_file_name.replace(".csv", "_last_12_weeks.csv")
+    historic_data.to_csv(historic_data_file_name, index=False)
+
+    print("--- historic data ---")
+    print(historic_data)
+
+    print("--- future data ---")
+    print(future_data)
+
+    first_prediction = predict(model_file_name, historic_data_file_name, future_data, config_file, out_file)
+    
+    # for each region, find which weeks it actually gave predictions for
+    regions = first_prediction["location"].unique()
+    # for each region, find the first week it gave predictions for
+    first_weeks = {}
+    offsets = {}
+    for region in regions:
+        # the predictions are sorted, so that the first entry for that region will be the first week
+        first_entry = first_prediction[first_prediction["location"] == region].iloc[0]
+        historic_data_for_region = historic_data[historic_data["location"] == region]
+        # find the row index of the historic_data_for_region that matches the first entry
+        matching_row = historic_data_for_region[
+            (historic_data_for_region["week"] == first_entry["week"]) &
+            (historic_data_for_region["year"] == first_entry["year"])
+        ]
+        row_index = matching_row.index[0] if not matching_row.empty else None
+        if row_index == None:
+            print(f"Warning: No matching row found for region {region} in historic data for week {first_entry['week']} and year {first_entry['year']}")
+            print("Historic data:")
+            print(historic_data_for_region)
+            continue
+        # get row number, not index instead
+        row_number = historic_data_for_region.index.get_loc(row_index)
+        first_weeks[region] = row_number
+        # find the offset, which is how many weeks are before this in the historic data (this is the lag the model found for this region)
+        #index_of_first_week = historic_data_for_region.index[0]
+        offsets[region] = row_number  # row_index - index_of_first_week
+
+    print("Offsets for each region:", offsets)
+    
+    # change historic data so that each region starts at the offset
+    new_historic_data = []
+    for region in regions:
+        region_data = historic_data[historic_data["location"] == region]
+        # get the offset for this region
+        offset = offsets[region]
+        # get the data offset back from the end
+        region_data = region_data.iloc[-offset:]
+        # add the region data to the new_historic_data
+        new_historic_data.append(region_data)
+    
+    # concat the new_historic_data
+    new_historic_data = pd.concat(new_historic_data)
+    # write the new historic data to a file
+    new_historic_data_file_name = historic_data_file_name.replace(".csv", "_adjusted.csv")
+    new_historic_data.to_csv(new_historic_data_file_name, index=False) 
+
+    # now call predict with this adjusted historic data
+    results = predict(model_file_name, new_historic_data_file_name, future_data, config_file, out_file)
+
+
 def predict(model_file_name, historic_data, future_data, config_file, out_file):
     # future_data should be a csv that follows the chap format"""
     required_columns = ["location", "mean_temperature", "rainfall", "disease_cases"]
@@ -79,11 +176,14 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file):
     d1 = pd.read_csv(historic_data)
     # the model needs the n_lags last rows from the historic data, where n_lags is configure in the config file
     #d1 = d1.iloc[-9:]
-    d1 = d1.groupby("location").tail(9)
     logger.info("Historic data")
     logger.info(d1)
 
     d2 = pd.read_csv(future_data)
+    # get number of weeks/months to predict as the number of entries in the future data for a single location
+    d2_first_location = d2[d2["location"] == d2["location"].unique()[0]]
+    logging.info(f"There are {len(d2_first_location)} weeks to predict for the first location. Assuming the same for all.")
+    n_to_predict = len(d2_first_location)
     # concat historic and future data
     data = pd.concat([d1, d2])
     # sort data on location, year, week
@@ -108,8 +208,9 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file):
     logger.info("Writing new future data to " + new_future_data_file_name)
     data.to_csv(new_future_data_file_name, index=False)
 
+    print("--- data sent to ewars ---")
+    print(data)
 
-    logger.info(f"Predicting cases for future data: {future_data}")
     curl_command = f"""curl -X POST http://127.0.0.1:3288/Ewars_predict \
         -H 'accept: */*' \
         -F "pros_csv_File=@{new_future_data_file_name}" \
@@ -125,7 +226,13 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file):
     out_file_json = str(out_file).replace(".csv", ".json")
     curl_command = f"curl -o {out_file_json} http://127.0.0.1:3288/retrieve_predicted_cases"
     output = run_command(curl_command)
-    df = change_prediction_format_to_chap(out_file_json, out_file, n_to_predict=len(d2))
+    df = change_prediction_format_to_chap(out_file_json, out_file, n_to_predict=n_to_predict)
+    df.to_csv(out_file, index=False)
+    
+    print("--- df returned from ewars ---")
+    print(df)
+
+    return df
     
     # keep only those week and years that are in the future data
     # the model gives more
@@ -136,6 +243,9 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file):
     df = df.merge(d2[['year', 'week']].drop_duplicates(), on=['year', 'week'], how='inner')
     assert len(df) == len(d2), f"Length of predictions {len(df)} does not match length of future data {len(d2)}"
     df.to_csv(out_file, index=False)
+
+
+
 
 
 def test_train():
@@ -159,7 +269,11 @@ def test_predict():
 
  
 def change_prediction_format_to_chap(predictions_json, out_csv, n_to_predict):
+    assert type(predictions_json) == str, "predictions_json should be a string"
     json_data = json.loads(open(predictions_json).read())
+
+    print(type(json_data))
+    print(json_data)
 
     # Extract relevant data
     rows = []
@@ -179,8 +293,12 @@ def change_prediction_format_to_chap(predictions_json, out_csv, n_to_predict):
                     'week': prediction.get('week')
                 })
 
+    df = pd.DataFrame(rows)
+    # only keep the first n_to_predict rows for each location 
+    filtered = df.groupby('location').head(n_to_predict)
+
     # return as dataframe
-    return pd.DataFrame(rows)
+    return filtered
 
     # Write to CSV
     csv_file = out_csv
@@ -202,8 +320,14 @@ if __name__ == "__main__":
 
     command = sys.argv[1]
     if command == "train":
-        train(sys.argv[2], "demo_data/ewars_config.json", sys.argv[3], sys.argv[4])
+        print("Training")
+        #train(sys.argv[2], "demo_data/ewars_config.json", sys.argv[3], sys.argv[4])
+        pass
     elif command == "predict":
-        predict(sys.argv[2], sys.argv[3], sys.argv[4], "demo_data/ewars_config.json", sys.argv[5])
+        train(sys.argv[3], "demo_data/ewars_config.json", sys.argv[6], sys.argv[2])
+        predict_wrapper(sys.argv[2], sys.argv[3], sys.argv[4], "demo_data/ewars_config.json", sys.argv[5])
+    else:
+        print(f"Command {command} not recognized")
+        assert False
 
    #train(historic_data, config_file, geojson)
