@@ -1,6 +1,6 @@
 # Implementation of Ewars Plus with Chap
 
-This is a small set of scripts for making the EWARS API that available through docker (`maquins/ewars_plus_api:Upload`) compatible with the [Chap Modeling Platform](https://github.com/dhis2-chap/chap).
+This is a small set of scripts for making the EWARS API that is available through docker (`maquins/ewars_plus_api:Upload`) compatible with the [Chap Modeling Platform](https://github.com/dhis2-chap/chap).
 
 There have been no changes made to the model in order to make it compatible with Chap. Instead, the main purpose of this implementation is to convert the data formats used by Chap to formats compatible with the EWARS API and parse the predictions given by the API so that they are compatible with Chap. Additionally, a few 
 
@@ -26,9 +26,7 @@ chap evaluate /home/ivargry/dev/ewars_plus_python_wrapper/ --dataset-csv example
 
 After running the above command, you will get a small report with predictions in `report.pdf`. It should look something like this:
 
-```markdown
 ![Example Report](example1.png)
-```
 
 ## Comparing the model to other model available through Chap
 
