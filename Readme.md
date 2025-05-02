@@ -2,7 +2,7 @@
 
 This is a small set of scripts for making the EWARS API that is available through docker (`maquins/ewars_plus_api:Upload`) compatible with the [Chap Modeling Platform](https://github.com/dhis2-chap/chap).
 
-There have been no changes made to the model in order to make it compatible with Chap. Instead, the main purpose of this implementation is to convert the data formats used by Chap to formats compatible with the EWARS API and parse the predictions given by the API so that they are compatible with Chap. Additionally, a few 
+There have been no changes made to the model in order to make it compatible with Chap. Instead, the main purpose of this implementation is to convert the data formats used by Chap to formats compatible with the EWARS API and parse the predictions given by the API so that they are compatible with Chap. Additionally, a few tricks have been implemented to get the model to predict for correct time periods (see more details below). 
 
 
 ## How to run the EWARS model with Chap
@@ -52,7 +52,3 @@ Since this is simply a wrapper around the EWARS API, it is possible to inspect t
 1) We have currently only tested the model on some small toy dataset. The model may easily break or not work on other data, and is likely to be very slow on bigger data sets.
 2) An issue with the model is that it is not possible to ask for predictions for a given period. Instead, it will "shift" the start period based on the optimal lag it finds when training. This means that for any region, you may get predictions for different periods (somewhat arbitrarily). We have "hacked" around this by running the model twice: We first run it once to see what periods it gives, then we adjust the input data accordingly and run it again. This is hacky, but seems to works. Ideally, this issue should be fixed in the underlying model.
 3) For now, this integration needs a manual start of the docker image, which means it cannot be automatically run through the Modeling App now. But this should be an easy fix in the future.
-
-```bash
-chap evaluate /home/ivargry/dev/ewars_plus_python_wrapper/ --dataset-csv example_data/small_laos_data_with_polygons2.csv --polygons-json example_data/small_laos_data_with_polygons.geojson --n-splits 1 --debug --report-filename ewars_report.pdf --prediction-length 3
-```
