@@ -71,7 +71,7 @@ def train(historic_data, config_file, geojson_file, mode_file_name):
     logger.info(f"Training model with historic data: {historic_data}")
 
     curl_command = f"""curl -X POST \
-        http://127.0.0.1:3288/Ewars_run \
+         http://ewars_plus:3288/Ewars_run \
         -H 'accept: */*' \
         -F "csv_File=@{new_historic_data_file_name}" \
         -F "shape_File=@{geojson_file}" \
@@ -211,7 +211,7 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file):
     print("--- data sent to ewars ---")
     print(data)
 
-    curl_command = f"""curl -X POST http://127.0.0.1:3288/Ewars_predict \
+    curl_command = f"""curl -X POST http://ewars_plus:3288/Ewars_predict \
         -H 'accept: */*' \
         -F "pros_csv_File=@{new_future_data_file_name}" \
         -F "config_File=@{config_file}" \
@@ -224,7 +224,7 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file):
     # check that file type is csv
     assert out_file.suffix == ".csv"
     out_file_json = str(out_file).replace(".csv", ".json")
-    curl_command = f"curl -o {out_file_json} http://127.0.0.1:3288/retrieve_predicted_cases"
+    curl_command = f"curl -o {out_file_json} http://ewars_plus:3288/retrieve_predicted_cases"
     output = run_command(curl_command)
     df = change_prediction_format_to_chap(out_file_json, out_file, n_to_predict=n_to_predict)
     df.to_csv(out_file, index=False)
