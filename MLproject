@@ -33,11 +33,11 @@ entry_points:
     parameters:
       train_data: str
       model: str
-    command: "python main.py train {train_data} {polygons} {model}"
+    command: "python main.py train {train_data} demo_data/laos_province_shapefile.GEOJSON {model}"
   predict:
     parameters:
       historic_data: str
       future_data: str
       model: str
       out_file: str
-    command: "python main.py predict  {model} {historic_data} {future_data} {out_file} {polygons}"
+    command: "python main.py predict  {model} {historic_data} {future_data} {out_file} demo_data/laos_province_shapefile.GEOJSON"
