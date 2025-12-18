@@ -102,6 +102,8 @@ def convert_districts_to_numeric(csv_files: list, geojson_file: str, model_file_
 
     # Update GeoJSON in-place
     if geojson_file:
+        with open(geojson_file) as f:
+            geojson_data = json.load(f)
         for feat in geojson_data.get("features", []):
             props = feat.get("properties", {})
             # Only convert if district is not already numeric
