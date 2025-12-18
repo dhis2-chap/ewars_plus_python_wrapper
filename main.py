@@ -178,8 +178,10 @@ def train(historic_data, config_file, geojson_file, mode_file_name):
     # First ensure GeoJSON has district property (copies from id if missing)
     add_district_to_geojson(geojson_file)
 
-    # Then convert districts to numeric IDs
-    convert_districts_to_numeric([historic_data], geojson_file, mode_file_name)
+    # Then convert districts to numeric IDs (reuse existing mapping if available)
+    mapping_file = mode_file_name.replace(".json", "") + "_district_mapping.pkl"
+    load_existing = Path(mapping_file).exists()
+    convert_districts_to_numeric([historic_data], geojson_file, mode_file_name, load_existing=load_existing)
     # historic_data should be a csv that follows the chap format
     data = pd.read_csv(historic_data)
     required_columns = ["location", "mean_temperature", "rainfall", "disease_cases"]
