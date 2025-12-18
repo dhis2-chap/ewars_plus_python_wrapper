@@ -305,6 +305,10 @@ def predict_wrapper(model_file_name, historic_data_file_name, future_data, confi
     # now call predict with this adjusted historic data
     results = predict(model_file_name, new_historic_data_file_name, future_data, config_file, out_file)
 
+    # Restore original district names in final output
+    results = restore_district_names(results, model_file_name)
+    results.to_csv(out_file, index=False)
+
 
 def predict(model_file_name, historic_data, future_data, config_file, out_file):
     # future_data should be a csv that follows the chap format"""
@@ -365,9 +369,6 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file):
     curl_command = f"curl -o {out_file_json} http://ewars_plus:3288/retrieve_predicted_cases"
     output = run_command(curl_command)
     df = change_prediction_format_to_chap(out_file_json, out_file, n_to_predict=n_to_predict)
-
-    # Restore original district names
-    df = restore_district_names(df, model_file_name)
 
     df.to_csv(out_file, index=False)
 
