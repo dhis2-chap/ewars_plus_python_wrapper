@@ -25,7 +25,7 @@ def add_district_to_geojson(filename):
         json.dump(data, f, ensure_ascii=False)
 
 
-def convert_districts_to_numeric(csv_files: list, geojson_file: str, model_file_name: str):
+def convert_districts_to_numeric(csv_files: list, geojson_file: str, model_file_name: str, load_existing: bool = False):
     """
     Convert district identifiers to numeric values in CSV and GeoJSON files.
     Saves mapping to {model_file_name}_district_mapping.pkl
@@ -34,37 +34,46 @@ def convert_districts_to_numeric(csv_files: list, geojson_file: str, model_file_
         csv_files: List of CSV file paths to modify in-place
         geojson_file: GeoJSON file path to modify in-place (can be None)
         model_file_name: Base name for saving the mapping pickle file
+        load_existing: If True, load existing mapping from pickle file instead of creating new one
     """
-    all_districts = set()
-
-    # Collect unique district values from CSV files
-    for csv_file in csv_files:
-        df = pd.read_csv(csv_file)
-        if "location" in df.columns:
-            all_districts.update(df["location"].unique())
-        if "district" in df.columns:
-            all_districts.update(df["district"].unique())
-
-    # Collect district values from GeoJSON
-    if geojson_file:
-        with open(geojson_file) as f:
-            geojson_data = json.load(f)
-        for feat in geojson_data.get("features", []):
-            props = feat.get("properties", {})
-            if "district" in props:
-                all_districts.add(props["district"])
-            if "id" in props:
-                all_districts.add(props["id"])
-
-    # Create mapping: original_name -> numeric_id (starting from 1)
-    sorted_districts = sorted(all_districts, key=str)
-    district_mapping = {district: idx + 1 for idx, district in enumerate(sorted_districts)}
-
-    # Save mapping to pickle file
     mapping_file = model_file_name.replace(".json", "") + "_district_mapping.pkl"
-    with open(mapping_file, "wb") as f:
-        pickle.dump(district_mapping, f)
-    logger.info(f"Saved district mapping to {mapping_file}: {district_mapping}")
+
+    if load_existing:
+        # Load existing mapping from train
+        with open(mapping_file, "rb") as f:
+            district_mapping = pickle.load(f)
+        logger.info(f"Loaded existing district mapping from {mapping_file}: {district_mapping}")
+    else:
+        # Create new mapping
+        all_districts = set()
+
+        # Collect unique district values from CSV files
+        for csv_file in csv_files:
+            df = pd.read_csv(csv_file)
+            if "location" in df.columns:
+                all_districts.update(df["location"].unique())
+            if "district" in df.columns:
+                all_districts.update(df["district"].unique())
+
+        # Collect district values from GeoJSON
+        if geojson_file:
+            with open(geojson_file) as f:
+                geojson_data = json.load(f)
+            for feat in geojson_data.get("features", []):
+                props = feat.get("properties", {})
+                if "district" in props:
+                    all_districts.add(props["district"])
+                if "id" in props:
+                    all_districts.add(props["id"])
+
+        # Create mapping: original_name -> numeric_id (starting from 1)
+        sorted_districts = sorted(all_districts, key=str)
+        district_mapping = {district: idx + 1 for idx, district in enumerate(sorted_districts)}
+
+        # Save mapping to pickle file
+        with open(mapping_file, "wb") as f:
+            pickle.dump(district_mapping, f)
+        logger.info(f"Saved district mapping to {mapping_file}: {district_mapping}")
 
     # Update CSV files in-place
     for csv_file in csv_files:
@@ -214,7 +223,7 @@ def predict_wrapper(model_file_name, historic_data_file_name, future_data, confi
     Note: historic data has values for covariates and disease cases, future data has NaN for these.
     """
     # Convert districts to numeric IDs (GeoJSON already converted during train)
-    convert_districts_to_numeric([historic_data_file_name, future_data], None, model_file_name)
+    convert_districts_to_numeric([historic_data_file_name, future_data], None, model_file_name, load_existing=True)
 
     historic_data = pd.read_csv(historic_data_file_name)
     historic_data = historic_data.groupby("location").tail(15)  # only keep the last 12 weeks, that is the maximum lag that can be found
