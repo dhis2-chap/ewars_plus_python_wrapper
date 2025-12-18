@@ -6,13 +6,11 @@ print(logger.level)
 
 import json
 import csv
+import pickle
 from pathlib import Path
 import subprocess
 import sys
 import pandas as pd
-
-
-import json
 
 def add_district_to_geojson(filename):
     with open(filename) as f:
@@ -25,6 +23,99 @@ def add_district_to_geojson(filename):
 
     with open(filename, "w") as f:
         json.dump(data, f, ensure_ascii=False)
+
+
+def convert_districts_to_numeric(csv_files: list, geojson_file: str, model_file_name: str):
+    """
+    Convert district identifiers to numeric values in CSV and GeoJSON files.
+    Saves mapping to {model_file_name}_district_mapping.pkl
+
+    Args:
+        csv_files: List of CSV file paths to modify in-place
+        geojson_file: GeoJSON file path to modify in-place (can be None)
+        model_file_name: Base name for saving the mapping pickle file
+    """
+    all_districts = set()
+
+    # Collect unique district values from CSV files
+    for csv_file in csv_files:
+        df = pd.read_csv(csv_file)
+        if "location" in df.columns:
+            all_districts.update(df["location"].unique())
+        if "district" in df.columns:
+            all_districts.update(df["district"].unique())
+
+    # Collect district values from GeoJSON
+    if geojson_file:
+        with open(geojson_file) as f:
+            geojson_data = json.load(f)
+        for feat in geojson_data.get("features", []):
+            props = feat.get("properties", {})
+            if "district" in props:
+                all_districts.add(props["district"])
+            if "id" in props:
+                all_districts.add(props["id"])
+
+    # Create mapping: original_name -> numeric_id (starting from 1)
+    sorted_districts = sorted(all_districts, key=str)
+    district_mapping = {district: idx + 1 for idx, district in enumerate(sorted_districts)}
+
+    # Save mapping to pickle file
+    mapping_file = model_file_name.replace(".json", "") + "_district_mapping.pkl"
+    with open(mapping_file, "wb") as f:
+        pickle.dump(district_mapping, f)
+    logger.info(f"Saved district mapping to {mapping_file}: {district_mapping}")
+
+    # Update CSV files in-place
+    for csv_file in csv_files:
+        df = pd.read_csv(csv_file)
+        modified = False
+        if "location" in df.columns:
+            df["location"] = df["location"].map(district_mapping)
+            modified = True
+        if "district" in df.columns:
+            df["district"] = df["district"].map(district_mapping)
+            modified = True
+        if modified:
+            df.to_csv(csv_file, index=False)
+            logger.info(f"Updated CSV file {csv_file} with numeric districts")
+
+    # Update GeoJSON in-place
+    if geojson_file:
+        for feat in geojson_data.get("features", []):
+            props = feat.get("properties", {})
+            if "district" in props and props["district"] in district_mapping:
+                props["district"] = district_mapping[props["district"]]
+            if "id" in props and props["id"] in district_mapping:
+                props["id"] = district_mapping[props["id"]]
+        with open(geojson_file, "w") as f:
+            json.dump(geojson_data, f, ensure_ascii=False)
+        logger.info(f"Updated GeoJSON file {geojson_file} with numeric districts")
+
+
+def restore_district_names(df: pd.DataFrame, model_file_name: str) -> pd.DataFrame:
+    """
+    Restore original district names in prediction output using saved mapping.
+
+    Args:
+        df: DataFrame with numeric "location" column
+        model_file_name: Base name to find the mapping pickle file
+    Returns:
+        DataFrame with original district names in "location" column
+    """
+    mapping_file = model_file_name.replace(".json", "") + "_district_mapping.pkl"
+    with open(mapping_file, "rb") as f:
+        district_mapping = pickle.load(f)
+
+    # Create reverse mapping: numeric_id -> original_name
+    reverse_mapping = {v: k for k, v in district_mapping.items()}
+
+    # Replace values in location column
+    if "location" in df.columns:
+        df["location"] = df["location"].map(reverse_mapping)
+        logger.info(f"Restored original district names using mapping from {mapping_file}")
+
+    return df
 
 
 def run_command(command):
@@ -61,6 +152,9 @@ def standardize_rainfall(train_data: pd.DataFrame):
 
 
 def train(historic_data, config_file, geojson_file, mode_file_name):
+    # Convert districts to numeric IDs first
+    convert_districts_to_numeric([historic_data], geojson_file, mode_file_name)
+
     add_district_to_geojson(geojson_file)
     # historic_data should be a csv that follows the chap format
     data = pd.read_csv(historic_data)
@@ -111,7 +205,7 @@ def predict_wrapper(model_file_name, historic_data_file_name, future_data, confi
     that the it is offseted correctly so that predictions actually start where we want them to
     for each region.
 
-    In the first run, we always send in more historic data than the maximum lag we think 
+    In the first run, we always send in more historic data than the maximum lag we think
     the model will use. This means the predictions will start somewhere in the historic data (since the model
     always starts the the amount of weeks into the data that corresponds the the lag it found in step 1.
     Based on where this is, we adjust the historic data in the next run so that the predictions
@@ -119,6 +213,8 @@ def predict_wrapper(model_file_name, historic_data_file_name, future_data, confi
 
     Note: historic data has values for covariates and disease cases, future data has NaN for these.
     """
+    # Convert districts to numeric IDs (GeoJSON already converted during train)
+    convert_districts_to_numeric([historic_data_file_name, future_data], None, model_file_name)
 
     historic_data = pd.read_csv(historic_data_file_name)
     historic_data = historic_data.groupby("location").tail(15)  # only keep the last 12 weeks, that is the maximum lag that can be found
@@ -243,8 +339,12 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file):
     curl_command = f"curl -o {out_file_json} http://ewars_plus:3288/retrieve_predicted_cases"
     output = run_command(curl_command)
     df = change_prediction_format_to_chap(out_file_json, out_file, n_to_predict=n_to_predict)
+
+    # Restore original district names
+    df = restore_district_names(df, model_file_name)
+
     df.to_csv(out_file, index=False)
-    
+
     print("--- df returned from ewars ---")
     print(df)
 
