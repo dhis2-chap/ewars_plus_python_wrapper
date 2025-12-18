@@ -12,6 +12,21 @@ import sys
 import pandas as pd
 
 
+import json
+
+def add_district_to_geojson(filename):
+    with open(filename) as f:
+        data = json.load(f)
+
+    for feat in data.get("features", []):
+        props = feat.setdefault("properties", {})
+        if "id" in props and "district" not in props:
+            props["district"] = props["id"]
+
+    with open(filename, "w") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
 def run_command(command):
     logger.info(f"Running command {command}") 
     print("----------------------------------")
@@ -46,6 +61,7 @@ def standardize_rainfall(train_data: pd.DataFrame):
 
 
 def train(historic_data, config_file, geojson_file, mode_file_name):
+    add_district_to_geojson(geojson_file)
     # historic_data should be a csv that follows the chap format
     data = pd.read_csv(historic_data)
     required_columns = ["location", "mean_temperature", "rainfall", "disease_cases"]
@@ -103,7 +119,7 @@ def predict_wrapper(model_file_name, historic_data_file_name, future_data, confi
 
     Note: historic data has values for covariates and disease cases, future data has NaN for these.
     """
-    
+
     historic_data = pd.read_csv(historic_data_file_name)
     historic_data = historic_data.groupby("location").tail(15)  # only keep the last 12 weeks, that is the maximum lag that can be found
 
