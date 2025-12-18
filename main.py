@@ -104,10 +104,13 @@ def convert_districts_to_numeric(csv_files: list, geojson_file: str, model_file_
     if geojson_file:
         for feat in geojson_data.get("features", []):
             props = feat.get("properties", {})
-            if "district" in props and props["district"] in district_mapping:
-                props["district"] = district_mapping[props["district"]]
-            #if "id" in props and props["id"] in district_mapping:
-            #   props["id"] = district_mapping[props["id"]]
+            # Only convert if district is not already numeric
+            if "district" in props:
+                if not isinstance(props["district"], (int, float)):
+                    if props["district"] in district_mapping:
+                        props["district"] = district_mapping[props["district"]]
+                else:
+                    logger.info(f"Skipping GeoJSON district conversion - already numeric: {props['district']}")
         with open(geojson_file, "w") as f:
             json.dump(geojson_data, f, ensure_ascii=False)
         logger.info(f"Updated GeoJSON file {geojson_file} with numeric districts")
@@ -172,10 +175,11 @@ def standardize_rainfall(train_data: pd.DataFrame):
 
 
 def train(historic_data, config_file, geojson_file, mode_file_name):
-    # Convert districts to numeric IDs first
-    convert_districts_to_numeric([historic_data], geojson_file, mode_file_name)
-
+    # First ensure GeoJSON has district property (copies from id if missing)
     add_district_to_geojson(geojson_file)
+
+    # Then convert districts to numeric IDs
+    convert_districts_to_numeric([historic_data], geojson_file, mode_file_name)
     # historic_data should be a csv that follows the chap format
     data = pd.read_csv(historic_data)
     required_columns = ["location", "mean_temperature", "rainfall", "disease_cases"]
