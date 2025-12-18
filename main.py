@@ -198,7 +198,8 @@ def train(historic_data, config_file, geojson_file, mode_file_name):
     new_historic_data_file_name = historic_data.replace(".csv", "_std.csv")
 
     # change location to district (which is the name ewars uses)
-    data = data.rename(columns={"location": "district"})
+    if "district" not in data.columns:
+        data = data.rename(columns={"location": "district"})
 
     data.to_csv(new_historic_data_file_name, index=False)
     
@@ -339,7 +340,8 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file):
         data["disease_cases"] = 0
 
     # change location to district (which is the name ewars uses)
-    data = data.rename(columns={"location": "district"})
+    if "district" not in data.columns:
+        data = data.rename(columns={"location": "district"})
 
     logger.info("Writing new future data to " + new_future_data_file_name)
     data.to_csv(new_future_data_file_name, index=False)
