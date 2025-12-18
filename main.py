@@ -79,12 +79,23 @@ def convert_districts_to_numeric(csv_files: list, geojson_file: str, model_file_
     for csv_file in csv_files:
         df = pd.read_csv(csv_file)
         modified = False
+
         if "location" in df.columns:
-            df["location"] = df["location"].map(district_mapping)
-            modified = True
+            # Skip if values are already numeric (already converted)
+            if not pd.api.types.is_numeric_dtype(df["location"]) or df["location"].isna().all():
+                df["location"] = df["location"].map(district_mapping)
+                modified = True
+            else:
+                logger.info(f"Skipping location conversion in {csv_file} - already numeric")
+
         if "district" in df.columns:
-            df["district"] = df["district"].map(district_mapping)
-            modified = True
+            # Skip if values are already numeric (already converted)
+            if not pd.api.types.is_numeric_dtype(df["district"]) or df["district"].isna().all():
+                df["district"] = df["district"].map(district_mapping)
+                modified = True
+            else:
+                logger.info(f"Skipping district conversion in {csv_file} - already numeric")
+
         if modified:
             df.to_csv(csv_file, index=False)
             logger.info(f"Updated CSV file {csv_file} with numeric districts")
@@ -95,8 +106,8 @@ def convert_districts_to_numeric(csv_files: list, geojson_file: str, model_file_
             props = feat.get("properties", {})
             if "district" in props and props["district"] in district_mapping:
                 props["district"] = district_mapping[props["district"]]
-            if "id" in props and props["id"] in district_mapping:
-                props["id"] = district_mapping[props["id"]]
+            #if "id" in props and props["id"] in district_mapping:
+            #   props["id"] = district_mapping[props["id"]]
         with open(geojson_file, "w") as f:
             json.dump(geojson_data, f, ensure_ascii=False)
         logger.info(f"Updated GeoJSON file {geojson_file} with numeric districts")
