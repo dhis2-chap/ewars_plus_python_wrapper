@@ -257,13 +257,13 @@ def predict_wrapper(model_file_name, historic_data_file_name, future_data, confi
     first_prediction = predict(model_file_name, historic_data_file_name, future_data, config_file, out_file)
     
     # for each region, find which weeks it actually gave predictions for
-    regions = first_prediction["district"].unique()
+    regions = first_prediction["location"].unique()
     # for each region, find the first week it gave predictions for
     first_weeks = {}
     offsets = {}
     for region in regions:
         # the predictions are sorted, so that the first entry for that region will be the first week
-        first_entry = first_prediction[first_prediction["district"] == region].iloc[0]
+        first_entry = first_prediction[first_prediction["location"] == region].iloc[0]
         historic_data_for_region = historic_data[historic_data["district"] == region]
         # find the row index of the historic_data_for_region that matches the first entry
         matching_row = historic_data_for_region[
