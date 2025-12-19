@@ -5,9 +5,37 @@ This is a small set of scripts for making the EWARS API that is available throug
 There have been no changes made to the model in order to make it compatible with Chap. Instead, the main purpose of this implementation is to convert the data formats used by Chap to formats compatible with the EWARS API and parse the predictions given by the API so that they are compatible with Chap. Additionally, a few tricks have been implemented to get the model to predict for correct time periods (see more details below). 
 
 
-## How to run the EWARS model with Chap
+## How to run the EWARS model with Chap through the Modeling App
 
-We have currently only verified that the model runs on some small "toy" example data from the Chap example data repository. The model is currently not available through the Modeling App (but may be added in the future). For now, the model can be run using the Chap command line interface. To use the example data, you should have a developer installation of the chap-core package, see [installation instructions here](https://dhis2-chap.github.io/chap-core/contributor/getting_started.html).
+Add the EWARS API docker image to the chap compose.yml file:
+
+```yaml
+- url: https://github.com/dhis2-chap/ewars_plus_python_wrapper/
+  versions:
+    v1: "@modeling_app_test"
+```
+
+.. or you can alternative start the docker container manually before running Chap:
+```bash
+docker run -it -dp 3288:3288 maquins/ewars_plus_api:Upload
+```
+
+Then, make the model available in chap by adding this to `config/configured_models/default.yaml` in your chap installation:
+
+```yaml
+- url: https://github.com/dhis2-chap/ewars_plus_python_wrapper/
+  versions:
+    v1: "@modeling_app_test"
+```
+
+
+We have tested the model on our internal Laos test dataset, and successfully run it on data from 2018 to 2024 on the Vientiane province. Output should look something like this:
+
+![Example Report](example2.png)
+
+## How to run the EWARS model through chap on the command line with chap evaluate
+
+Note: This branch is meant for the modeling app, and has some hardcoded urls in main.py. To run on the command line, change all occurrences of http://ewars_api:3288 to http://localhost:3288 in main.py.
 
 ### 1: Start the EWARS API docker image
 

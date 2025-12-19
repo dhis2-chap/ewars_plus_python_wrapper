@@ -1,0 +1,7 @@
+.idea
+.venv
+.vscode
+__pycache__
+demo_data2
+out_formatted.json
+test.csv
