@@ -77,6 +77,5 @@ Since this is simply a wrapper around the EWARS API, it is possible to inspect t
 
 # Caveats / potential issues
 
-1) We have currently only tested the model on some small toy dataset. The model may easily break or not work on other data, and is likely to be very slow on bigger data sets.
+1) We have currently only tested the model on small toy datasets. The model may easily break or not work on other data, and is likely to be very slow on bigger datasets.
 2) An issue with the model is that it is not possible to ask for predictions for a given period. Instead, it will "shift" the start period based on the optimal lag it finds when training. This means that for any region, you may get predictions for different periods (somewhat arbitrarily). We have "hacked" around this by running the model twice: We first run it once to see what periods it gives, then we adjust the input data accordingly and run it again. This is hacky, but seems to works. Ideally, this issue should be fixed in the underlying model.
-3) For now, this integration needs a manual start of the docker image, which means it cannot be automatically run through the Modeling App now. But this should be an easy fix in the future.
