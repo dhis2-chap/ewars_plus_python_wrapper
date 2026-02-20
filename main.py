@@ -146,15 +146,17 @@ def restore_district_names(df: pd.DataFrame, model_file_name: str) -> pd.DataFra
 
 
 def run_command(command):
-    logger.info(f"Running command {command}") 
+    logger.info(f"Running command {command}")
     print("----------------------------------")
     print(f"Running command {command}")
     print("----------------------------------")
-    subprocess.run(command, shell=True)
-    # get output of command
-    output = subprocess.check_output(command, shell=True)
-    logger.info(f"Output: {output}")
-    return output
+    result = subprocess.run(command, shell=True, capture_output=True)
+    logger.info(f"Output: {result.stdout}")
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Command failed with exit code {result.returncode}: {result.stderr.decode()}"
+        )
+    return result.stdout
 
 
 def standardize_rainfall(train_data: pd.DataFrame):
@@ -221,7 +223,20 @@ def train(historic_data, config_file, geojson_file, mode_file_name):
     print(curl_command)
 
     logger.info(f"Executing command: {curl_command}")
-    run_command(curl_command)
+    output = run_command(curl_command)
+    _check_api_response(output, "/Ewars_run")
+
+
+def _check_api_response(output, endpoint):
+    """Check an EWARS API response for errors."""
+    if not output:
+        return
+    try:
+        response = json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        return
+    if isinstance(response, dict) and "error" in response:
+        raise RuntimeError(f"EWARS API error from {endpoint}: {response['error']}")
 
 
 def _add_year_week_columns(data):
@@ -365,8 +380,9 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file):
         -F "config_File=@{config_file}" \
     """
     logger.info(f"Executing command: {curl_command}")
-    run_command(curl_command)
-    
+    output = run_command(curl_command)
+    _check_api_response(output, "/Ewars_predict")
+
     # get predictions
     out_file = Path(out_file)
     # check that file type is csv
@@ -423,6 +439,15 @@ def change_prediction_format_to_chap(predictions_json, out_csv, n_to_predict):
 
     print(type(json_data))
     print(json_data)
+
+    if isinstance(json_data, dict) and "error" in json_data:
+        raise RuntimeError(
+            f"EWARS API returned error when retrieving predictions: {json_data['error']}"
+        )
+    if not isinstance(json_data, list):
+        raise RuntimeError(
+            f"Expected a list of predictions from EWARS API, got {type(json_data).__name__}: {json_data}"
+        )
 
     # Extract relevant data
     rows = []
