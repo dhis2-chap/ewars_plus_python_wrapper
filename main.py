@@ -338,6 +338,17 @@ def predict_wrapper(model_file_name, historic_data_file_name, future_data, confi
 
     # Restore original district names in final output
     results = restore_district_names(results, model_file_name)
+
+    # Pad results to one row per (location, year, week) tuple in future_data
+    # with NaN samples where the R model didn't populate predicted_cases for
+    # a requested week. chap-core's evaluation merges predictions and truth
+    # by exact PeriodRange equality, so a 1-week prediction for a 3-week
+    # truth window otherwise raises
+    #   ValueError: PeriodRange(2024W19..2024W21) != PeriodRange(2024W20..2024W20).
+    # See CLIM-617.
+    fut = pd.read_csv(future_data)
+    fut = restore_district_names(fut, model_file_name)
+    results = align_to_future_periods(results, fut)
     results.to_csv(out_file, index=False)
 
 
@@ -443,6 +454,56 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file, 
 
 
 
+
+
+def align_to_future_periods(predictions_df, future_data_df):
+    """Pad ``predictions_df`` with NaN-sample rows so it has exactly one row
+    per ``(location, year, week)`` tuple in ``future_data_df``.
+
+    The R model only fills ``predicted_cases`` for a sparse subset of
+    forecast weeks (lag warm-up + horizon). When ``predictions_df`` covers
+    fewer weeks than ``future_data_df`` requests, chap-core's evaluation
+    merge raises ``ValueError: PeriodRange(...) != PeriodRange(...)`` because
+    it compares prediction and truth period ranges by exact equality. Padding
+    here makes the prediction shape match the request shape; missing weeks
+    surface as NaN in downstream metrics rather than crashing the backtest.
+
+    Returns a DataFrame sorted by ``(location, year, week)``.
+    """
+    expected = future_data_df[["location", "year", "week"]].copy()
+    expected["year"] = expected["year"].astype(int)
+    expected["week"] = expected["week"].astype(int)
+    expected["time_period"] = (
+        expected["year"].astype(str) + "W" + expected["week"].astype(str)
+    )
+
+    sample_cols = ["sample_0", "sample_1", "sample_2"]
+
+    if predictions_df.empty:
+        result = expected.copy()
+        for col in sample_cols:
+            result[col] = float("nan")
+    else:
+        pred = predictions_df.copy()
+        pred["year"] = pred["year"].astype(int)
+        pred["week"] = pred["week"].astype(int)
+        present_sample_cols = [c for c in sample_cols if c in pred.columns]
+        keep_cols = ["location", "year", "week"] + present_sample_cols
+        result = expected.merge(
+            pred[keep_cols],
+            on=["location", "year", "week"],
+            how="left",
+        )
+        # Ensure all three sample columns exist even if predictions_df was
+        # missing one.
+        for col in sample_cols:
+            if col not in result.columns:
+                result[col] = float("nan")
+
+    return (
+        result.sort_values(["location", "year", "week"])
+        .reset_index(drop=True)
+    )
 
 
 def test_train():

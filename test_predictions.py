@@ -26,7 +26,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from main import change_prediction_format_to_chap
+from main import align_to_future_periods, change_prediction_format_to_chap
 
 
 def _write_json(tmp_path: Path, payload) -> str:
@@ -158,3 +158,82 @@ def test_filter_returns_empty_when_no_requested_period_has_predictions(tmp_path:
     )
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 0
+
+
+# ---------------------------------------------------------------------------
+# align_to_future_periods (CLIM-617 — chap-core PeriodRange equality merge)
+# ---------------------------------------------------------------------------
+#
+# When the R model populates predicted_cases for fewer weeks than future_data
+# requested, chap-core's evaluation merges prediction and truth by exact
+# PeriodRange equality and raises
+#   ValueError: PeriodRange(2024W19..2024W21) != PeriodRange(2024W20..2024W20).
+# align_to_future_periods pads the prediction frame with NaN-sample rows so
+# the shape matches the request shape.
+
+
+def test_align_pads_missing_periods_with_nan() -> None:
+    predictions = pd.DataFrame({
+        "time_period": ["2024W20"],
+        "sample_0": [10.0],
+        "sample_1": [1.0],
+        "sample_2": [30.0],
+        "location": ["A2K"],
+        "year": [2024],
+        "week": [20],
+    })
+    future = pd.DataFrame({
+        "location": ["A2K", "A2K", "A2K"],
+        "year": [2024, 2024, 2024],
+        "week": [19, 20, 21],
+    })
+    result = align_to_future_periods(predictions, future)
+    assert list(result["week"]) == [19, 20, 21]
+    assert list(result["time_period"]) == ["2024W19", "2024W20", "2024W21"]
+    assert pd.isna(result.loc[0, "sample_0"])     # week 19 missing
+    assert result.loc[1, "sample_0"] == 10.0      # week 20 present
+    assert pd.isna(result.loc[2, "sample_0"])     # week 21 missing
+
+
+def test_align_handles_empty_predictions() -> None:
+    """When the model didn't populate any of the requested weeks, every
+    output row has NaN samples — chap-core can still merge it against truth
+    of the same shape."""
+    empty = pd.DataFrame(
+        columns=["time_period", "sample_0", "sample_1", "sample_2",
+                 "location", "year", "week"]
+    )
+    future = pd.DataFrame({
+        "location": ["A2K", "A2K"],
+        "year": [2024, 2024],
+        "week": [19, 20],
+    })
+    result = align_to_future_periods(empty, future)
+    assert list(result["week"]) == [19, 20]
+    assert result["sample_0"].isna().all()
+
+
+def test_align_sorts_and_resets_index_across_locations() -> None:
+    """Padding is per-(location, year, week); when future_data covers
+    multiple districts, the result is sorted and indexed sanely."""
+    predictions = pd.DataFrame({
+        "time_period": ["2024W21", "2024W19"],  # intentionally out of order
+        "sample_0": [22.0, 19.0],
+        "sample_1": [2.0, 1.5],
+        "sample_2": [44.0, 38.0],
+        "location": ["B", "A"],
+        "year": [2024, 2024],
+        "week": [21, 19],
+    })
+    future = pd.DataFrame({
+        "location": ["A", "A", "B", "B"],
+        "year": [2024, 2024, 2024, 2024],
+        "week": [19, 20, 20, 21],
+    })
+    result = align_to_future_periods(predictions, future)
+    assert list(result["location"]) == ["A", "A", "B", "B"]
+    assert list(result["week"]) == [19, 20, 20, 21]
+    assert result.loc[0, "sample_0"] == 19.0       # A / W19 from predictions
+    assert pd.isna(result.loc[1, "sample_0"])      # A / W20 padded
+    assert pd.isna(result.loc[2, "sample_0"])      # B / W20 padded
+    assert result.loc[3, "sample_0"] == 22.0       # B / W21 from predictions
