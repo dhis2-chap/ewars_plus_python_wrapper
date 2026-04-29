@@ -275,7 +275,17 @@ def predict_wrapper(model_file_name, historic_data_file_name, future_data, confi
     print("--- future data ---")
     print(future_data)
 
-    first_prediction = predict(model_file_name, historic_data_file_name, future_data, config_file, out_file)
+    # The first call discovers per-district lag offsets, so it must see
+    # whichever forecast weeks the R model populated — not the (possibly
+    # disjoint) weeks future_data requests.
+    first_prediction = predict(
+        model_file_name,
+        historic_data_file_name,
+        future_data,
+        config_file,
+        out_file,
+        apply_period_filter=False,
+    )
     
     # for each region, find which weeks it actually gave predictions for
     regions = first_prediction["location"].unique()
@@ -331,7 +341,7 @@ def predict_wrapper(model_file_name, historic_data_file_name, future_data, confi
     results.to_csv(out_file, index=False)
 
 
-def predict(model_file_name, historic_data, future_data, config_file, out_file):
+def predict(model_file_name, historic_data, future_data, config_file, out_file, apply_period_filter=True):
     # future_data should be a csv that follows the chap format"""
     required_columns = ["location", "mean_temperature", "rainfall", "disease_cases"]
     # standardize rainfall
@@ -392,11 +402,21 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file):
     output = run_command(curl_command)
     # The R model's Prospective_prediction array carries `predicted_cases`
     # only for a sparse subset of forecast weeks (lag warm-up + horizon).
-    # Pass the (year, week) tuples actually requested via future_data so the
-    # output is filtered to exactly those periods, sorted, and consecutive
-    # (so chap-core's parser does not reject it with "Periods must be
-    # consecutive."). See CLIM-617.
-    requested_periods = list(zip(d2["year"].astype(int), d2["week"].astype(int)))
+    # When the caller is producing a final CSV for chap-core, we filter to
+    # exactly the (year, week) tuples requested via future_data so the
+    # output is consecutive (otherwise chap-core's parser rejects it with
+    # "Periods must be consecutive."). When `apply_period_filter=False`
+    # (used by predict_wrapper's first offset-discovery call), we skip
+    # the filter — that call needs to see whatever weeks the model
+    # actually predicted in order to compute per-district lag offsets,
+    # and would otherwise crash predict_wrapper with "No objects to
+    # concatenate" when the request window doesn't overlap the model's
+    # populated prediction range. See CLIM-617.
+    requested_periods = (
+        list(zip(d2["year"].astype(int), d2["week"].astype(int)))
+        if apply_period_filter
+        else None
+    )
     df = change_prediction_format_to_chap(
         out_file_json,
         out_file,
