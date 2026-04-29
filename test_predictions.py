@@ -172,7 +172,11 @@ def test_filter_returns_empty_when_no_requested_period_has_predictions(tmp_path:
 # the shape matches the request shape.
 
 
-def test_align_pads_missing_periods_with_nan() -> None:
+def test_align_carries_forward_and_back_fills_missing_periods() -> None:
+    """When the model populated only week 20 of a (W19, W20, W21) request,
+    the missing weeks are filled from the nearest populated week so every
+    row carries a finite sample (chap-core's Samples.from_pandas requires
+    np.isfinite across all entries)."""
     predictions = pd.DataFrame({
         "time_period": ["2024W20"],
         "sample_0": [10.0],
@@ -190,15 +194,17 @@ def test_align_pads_missing_periods_with_nan() -> None:
     result = align_to_future_periods(predictions, future)
     assert list(result["week"]) == [19, 20, 21]
     assert list(result["time_period"]) == ["2024W19", "2024W20", "2024W21"]
-    assert pd.isna(result.loc[0, "sample_0"])     # week 19 missing
-    assert result.loc[1, "sample_0"] == 10.0      # week 20 present
-    assert pd.isna(result.loc[2, "sample_0"])     # week 21 missing
+    # All weeks share W20's values: bfill into W19, original at W20, ffill into W21.
+    assert list(result["sample_0"]) == [10.0, 10.0, 10.0]
+    assert list(result["sample_1"]) == [1.0, 1.0, 1.0]
+    assert list(result["sample_2"]) == [30.0, 30.0, 30.0]
+    assert result["sample_0"].notna().all()
 
 
-def test_align_handles_empty_predictions() -> None:
-    """When the model didn't populate any of the requested weeks, every
-    output row has NaN samples — chap-core can still merge it against truth
-    of the same shape."""
+def test_align_raises_when_predictions_are_completely_empty() -> None:
+    """If the R model produced no predictions at all, no carry-forward
+    fallback exists — fail loudly so chap-core gets a diagnosable error
+    instead of an "all-NaN" CSV that would crash its finite-samples check."""
     empty = pd.DataFrame(
         columns=["time_period", "sample_0", "sample_1", "sample_2",
                  "location", "year", "week"]
@@ -208,22 +214,42 @@ def test_align_handles_empty_predictions() -> None:
         "year": [2024, 2024],
         "week": [19, 20],
     })
-    result = align_to_future_periods(empty, future)
-    assert list(result["week"]) == [19, 20]
-    assert result["sample_0"].isna().all()
+    with pytest.raises(RuntimeError, match="produced no predictions"):
+        align_to_future_periods(empty, future)
 
 
-def test_align_sorts_and_resets_index_across_locations() -> None:
-    """Padding is per-(location, year, week); when future_data covers
-    multiple districts, the result is sorted and indexed sanely."""
+def test_align_raises_when_a_location_has_no_predictions() -> None:
+    """ffill+bfill works per-location; if one location has zero populated
+    rows, padding can't infer a value. Surface that as a clear error."""
     predictions = pd.DataFrame({
-        "time_period": ["2024W21", "2024W19"],  # intentionally out of order
-        "sample_0": [22.0, 19.0],
-        "sample_1": [2.0, 1.5],
-        "sample_2": [44.0, 38.0],
-        "location": ["B", "A"],
+        "time_period": ["2024W20"],
+        "sample_0": [10.0],
+        "sample_1": [1.0],
+        "sample_2": [30.0],
+        "location": ["A"],
+        "year": [2024],
+        "week": [20],
+    })
+    future = pd.DataFrame({
+        "location": ["A", "B"],
         "year": [2024, 2024],
-        "week": [21, 19],
+        "week": [20, 20],
+    })
+    with pytest.raises(RuntimeError, match="some requested location"):
+        align_to_future_periods(predictions, future)
+
+
+def test_align_sorts_and_fills_per_location_independently() -> None:
+    """Carry-forward stays within a location; one location's W20 doesn't
+    leak into another location's missing rows."""
+    predictions = pd.DataFrame({
+        "time_period": ["2024W19", "2024W21"],
+        "sample_0": [19.0, 22.0],
+        "sample_1": [1.5, 2.0],
+        "sample_2": [38.0, 44.0],
+        "location": ["A", "B"],
+        "year": [2024, 2024],
+        "week": [19, 21],
     })
     future = pd.DataFrame({
         "location": ["A", "A", "B", "B"],
@@ -233,7 +259,5 @@ def test_align_sorts_and_resets_index_across_locations() -> None:
     result = align_to_future_periods(predictions, future)
     assert list(result["location"]) == ["A", "A", "B", "B"]
     assert list(result["week"]) == [19, 20, 20, 21]
-    assert result.loc[0, "sample_0"] == 19.0       # A / W19 from predictions
-    assert pd.isna(result.loc[1, "sample_0"])      # A / W20 padded
-    assert pd.isna(result.loc[2, "sample_0"])      # B / W20 padded
-    assert result.loc[3, "sample_0"] == 22.0       # B / W21 from predictions
+    # A: W19 original, W20 ffill from W19. B: W20 bfill from W21, W21 original.
+    assert list(result["sample_0"]) == [19.0, 19.0, 22.0, 22.0]

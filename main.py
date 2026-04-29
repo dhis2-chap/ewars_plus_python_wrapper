@@ -480,30 +480,54 @@ def align_to_future_periods(predictions_df, future_data_df):
     sample_cols = ["sample_0", "sample_1", "sample_2"]
 
     if predictions_df.empty:
-        result = expected.copy()
-        for col in sample_cols:
-            result[col] = float("nan")
-    else:
-        pred = predictions_df.copy()
-        pred["year"] = pred["year"].astype(int)
-        pred["week"] = pred["week"].astype(int)
-        present_sample_cols = [c for c in sample_cols if c in pred.columns]
-        keep_cols = ["location", "year", "week"] + present_sample_cols
-        result = expected.merge(
-            pred[keep_cols],
-            on=["location", "year", "week"],
-            how="left",
+        raise RuntimeError(
+            "ewars_plus produced no predictions for any requested week; "
+            "cannot align to future_data shape (chap-core requires finite "
+            "samples for every requested period)."
         )
-        # Ensure all three sample columns exist even if predictions_df was
-        # missing one.
-        for col in sample_cols:
-            if col not in result.columns:
-                result[col] = float("nan")
 
-    return (
+    pred = predictions_df.copy()
+    pred["year"] = pred["year"].astype(int)
+    pred["week"] = pred["week"].astype(int)
+    present_sample_cols = [c for c in sample_cols if c in pred.columns]
+    keep_cols = ["location", "year", "week"] + present_sample_cols
+    result = expected.merge(
+        pred[keep_cols],
+        on=["location", "year", "week"],
+        how="left",
+    )
+    # Ensure all three sample columns exist even if predictions_df was
+    # missing one.
+    for col in sample_cols:
+        if col not in result.columns:
+            result[col] = float("nan")
+
+    result = (
         result.sort_values(["location", "year", "week"])
         .reset_index(drop=True)
     )
+
+    # Carry-forward / back-fill missing samples per location. The R model
+    # only populates predicted_cases for a sparse subset of forecast weeks;
+    # chap-core's Samples.from_pandas requires every entry to be finite.
+    # ffill then bfill duplicates the nearest populated week's values into
+    # the NaN gaps. This biases evaluation (multiple weeks share one
+    # prediction) but lets the backtest complete instead of crashing.
+    result[sample_cols] = (
+        result.groupby("location")[sample_cols].ffill().bfill()
+    )
+
+    if result[sample_cols].isna().any().any():
+        missing = result[result[sample_cols].isna().any(axis=1)][
+            ["location", "year", "week"]
+        ]
+        raise RuntimeError(
+            "ewars_plus produced no predictions for some requested "
+            "location(s); cannot fill NaN samples without any populated "
+            f"reference: {missing.to_dict('records')}"
+        )
+
+    return result
 
 
 def test_train():
