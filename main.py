@@ -390,7 +390,19 @@ def predict(model_file_name, historic_data, future_data, config_file, out_file):
     out_file_json = str(out_file).replace(".csv", ".json")
     curl_command = f"curl --max-time 120 -o {out_file_json} {EWARS_API_URL}/retrieve_predicted_cases"
     output = run_command(curl_command)
-    df = change_prediction_format_to_chap(out_file_json, out_file, n_to_predict=n_to_predict)
+    # The R model's Prospective_prediction array carries `predicted_cases`
+    # only for a sparse subset of forecast weeks (lag warm-up + horizon).
+    # Pass the (year, week) tuples actually requested via future_data so the
+    # output is filtered to exactly those periods, sorted, and consecutive
+    # (so chap-core's parser does not reject it with "Periods must be
+    # consecutive."). See CLIM-617.
+    requested_periods = list(zip(d2["year"].astype(int), d2["week"].astype(int)))
+    df = change_prediction_format_to_chap(
+        out_file_json,
+        out_file,
+        n_to_predict=n_to_predict,
+        requested_periods=requested_periods,
+    )
 
     df.to_csv(out_file, index=False)
 
@@ -433,7 +445,29 @@ def test_predict():
     predict(model_file_name, historic_data, future_data, config_file, out_file)
 
  
-def change_prediction_format_to_chap(predictions_json, out_csv, n_to_predict):
+def change_prediction_format_to_chap(predictions_json, out_csv, n_to_predict, requested_periods=None):
+    """Convert the ewars_plus prediction JSON into the chap CSV format.
+
+    Parameters
+    ----------
+    predictions_json: str
+        Path to the JSON file written by /retrieve_predicted_cases.
+    out_csv: str | Path
+        Output CSV path (kept for back-compat; this function returns a
+        DataFrame and the caller writes the CSV).
+    n_to_predict: int
+        Used as a fallback when ``requested_periods`` is None: take the first
+        ``n_to_predict`` populated rows per location.
+    requested_periods: list[tuple[int, int]] | None
+        Optional list of (year, week) tuples. When provided, the output is
+        restricted to these periods and sorted by (location, year, week). This
+        guarantees consecutive output as long as the requested periods are
+        consecutive AND the model produced a ``predicted_cases`` value for
+        each of them. Without this filter the wrapper used to take the first
+        ``n_to_predict`` ``predicted_cases``-bearing rows regardless of which
+        weeks they were for, which produced gappy output that chap-core's
+        parser rejected with "Periods must be consecutive." (CLIM-617.)
+    """
     assert type(predictions_json) == str, "predictions_json should be a string"
     json_data = json.loads(open(predictions_json).read())
 
@@ -468,7 +502,22 @@ def change_prediction_format_to_chap(predictions_json, out_csv, n_to_predict):
                 })
 
     df = pd.DataFrame(rows)
-    # only keep the first n_to_predict rows for each location 
+
+    if requested_periods is not None:
+        wanted = {(int(y), int(w)) for y, w in requested_periods}
+        if df.empty:
+            return df
+        mask = [
+            (int(y), int(w)) in wanted
+            for y, w in zip(df["year"], df["week"])
+        ]
+        return (
+            df[mask]
+            .sort_values(["location", "year", "week"])
+            .reset_index(drop=True)
+        )
+
+    # only keep the first n_to_predict rows for each location
     filtered = df.groupby('location').head(n_to_predict)
 
     # return as dataframe
