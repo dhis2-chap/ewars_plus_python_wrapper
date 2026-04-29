@@ -108,6 +108,37 @@ def test_legacy_path_still_uses_head_n_to_predict(tmp_path: Path) -> None:
     assert list(df["week"]) == [20, 24, 26]
 
 
+def test_offset_discovery_call_must_not_filter(tmp_path: Path) -> None:
+    """Regression for the predict_wrapper "No objects to concatenate" crash.
+
+    The wrapper makes two /Ewars_predict calls. The first is for offset
+    discovery and must see whichever forecast weeks the model populated,
+    even when those weeks are disjoint from the future_data request — that
+    call later finds the first populated week in historic data to compute
+    per-district lag offsets. Passing ``requested_periods=None`` is how
+    predict() signals "give me whatever the model produced". This test
+    locks in that ``requested_periods=None`` returns the head(n_to_predict)
+    rows even when the populated weeks would be disjoint from a typical
+    future_data request — i.e. predict_wrapper's offset-discovery path
+    cannot end up with an empty DataFrame just because the model didn't
+    forecast the exact weeks the eventual final CSV will cover.
+    """
+    pp = [
+        {"district": 1, "year": 2024, "week": w,
+         "predicted_cases": w, "predicted_cases_lci": 1, "predicted_cases_uci": 40}
+        for w in (24, 26, 27)  # the would-be requested weeks (15..17) appear nowhere
+    ]
+    in_path = _write_json(tmp_path, [{"Prospective_prediction": pp}])
+    df = change_prediction_format_to_chap(
+        in_path,
+        str(tmp_path / "out.csv"),
+        n_to_predict=3,
+        requested_periods=None,            # offset-discovery semantics
+    )
+    assert len(df) == 3
+    assert list(df["week"]) == [24, 26, 27]
+
+
 def test_filter_returns_empty_when_no_requested_period_has_predictions(tmp_path: Path) -> None:
     """If the model didn't predict any of the requested weeks at all, the
     wrapper returns an empty frame rather than fabricating rows from
