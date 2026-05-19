@@ -12,7 +12,7 @@ import subprocess
 import sys
 import pandas as pd
 
-EWARS_API_URL = "http://ewars_plus:3288"
+EWARS_API_URL = "http://localhost:3288"
 
 def add_district_to_geojson(filename):
     with open(filename) as f:
